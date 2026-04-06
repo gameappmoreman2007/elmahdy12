@@ -92,14 +92,23 @@
 </head>
 <body>
 
-    <div class="navbar">
+  <div class="navbar">
         <a href="/" class="logo">🎓 <span>معادلة</span></a>
         <div class="nav-links">
-            <a href="/register">إنشاء حساب</a>
-            <a href="/login" class="btn-login">تسجيل الدخول</a>
+            {% if session.get('user_id') %}
+                <a href="/courses">📚 الكورسات</a>
+                <a href="/profile">👤 {{ session.get('name') }}</a>
+                {% if session.get('role') == 'admin' %}
+                    <a href="/admin">⚙️ لوحة التحكم</a>
+                {% endif %}
+                <a href="/logout" style="background:#e53935;">خروج</a>
+            {% else %}
+                <a href="/register">إنشاء حساب</a>
+                <a href="/login" class="btn-login">تسجيل الدخول</a>
+            {% endif %}
         </div>
     </div>
-
+    
     <div class="hero">
         <div class="particles"></div>
         <span class="icon-float">🎓</span>
