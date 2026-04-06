@@ -13,12 +13,13 @@ db = SQLAlchemy(app)
 
 os.makedirs('static/uploads', exist_ok=True)
 
+# Models
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100))
     email = db.Column(db.String(100), unique=True)
     password = db.Column(db.String(200))
-    role = db.Column(db.String(20))
+    role = db.Column(db.String(20)) # 'admin' or 'student'
     active = db.Column(db.Boolean, default=True)
 
 class Course(db.Model):
@@ -26,24 +27,78 @@ class Course(db.Model):
     title = db.Column(db.String(200))
     description = db.Column(db.String(500))
     subject = db.Column(db.String(100))
-    image = db.Column(db.String(200), default='📚')
+    image = db.Column(db.String(100), default='📚')
     active = db.Column(db.Boolean, default=True)
 
 class Lecture(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200))
     description = db.Column(db.String(500))
-    filename = db.Column(db.String(300))
+    video_url = db.Column(db.String(300))
     course_id = db.Column(db.Integer, db.ForeignKey('course.id'))
-    course = db.relationship('Course', backref='lectures')
-    active = db.Column(db.Boolean, default=True)
 
-with app.app_context():
-    db.create_all()
-
+# Routes
 @app.route('/')
+def index():
+    if session.get('user_id'):
+        return redirect(url_for('home'))
+    return render_template('index.html')
+
+@app.route('/home')
 def home():
+    if not session.get('user_id'):
+        return redirect(url_for('login'))
     return render_template('home.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+        user = User.query.filter_by(email=email).first()
+        if user and check_password_hash(user.password, password):
+            if not user.active:
+                return "حسابك موقوف، تواصل مع الإدارة."
+            session['user_id'] = user.id
+            session['name'] = user.name
+            session['role'] = user.role
+            return redirect(url_for('home'))
+        return "بيانات غير صحيحة"
+    return render_template('register.html') # Login inside register template
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        name = request.form.get('name')
+        email = request.form.get('email')
+        password = request.form.get('password')
+        admin_code = request.form.get('admin_code')
+        
+        role = 'student'
+        if admin_code == "ADMIN123": # كود سري لإنشاء حساب أدمن
+            role = 'admin'
+            
+        hashed_pw = generate_password_hash(password)
+        new_user = User(name=name, email=email, password=hashed_pw, role=role)
+        db.session.add(new_user)
+        db.session.commit()
+        return redirect(url_for('login'))
+    return render_template('register.html')
+
+@app.route('/courses')
+def courses():
+    if not session.get('user_id'):
+        return redirect(url_for('login'))
+    all_courses = Course.query.filter_by(active=True).all()
+    return render_template('course_detail.html', courses=all_courses, list_mode=True)
+
+@app.route('/course/<int:id>')
+def course_detail(id):
+    if not session.get('user_id'):
+        return redirect(url_for('login'))
+    course = Course.query.get_or_404(id)
+    lectures = Lecture.query.filter_by(course_id=id).all()
+    return render_template('course_detail.html', course=course, lectures=lectures, list_mode=False)
 
 @app.route('/admin')
 def admin():
@@ -51,133 +106,46 @@ def admin():
         return redirect(url_for('home'))
     return render_template('admin.html')
 
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        name = request.form['name']
-        email = request.form['email']
-        password = generate_password_hash(request.form['password'])
-        admin_code = request.form.get('admin_code', '')
-        if admin_code == 'MOADALAH2026':
-            role = 'admin'
-        else:
-            role = 'student'
-        existing_user = User.query.filter_by(email=email).first()
-        if existing_user:
-            return render_template('register.html', error='الإيميل ده مسجل قبل كده!')
-        user = User(name=name, email=email, password=password, role=role, active=True)
-        db.session.add(user)
-        db.session.commit()
-        return redirect(url_for('login'))
-    return render_template('register.html')
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
-        user = User.query.filter_by(email=email).first()
-        if user and check_password_hash(user.password, password):
-            if not user.active:
-                return render_template('login.html', error='حسابك موقوف! تواصل مع الأدمين.')
-            session['user_id'] = user.id
-            session['name'] = user.name
-            session['role'] = user.role
-            if user.role == 'admin':
-                return redirect(url_for('admin'))
-            else:
-                return redirect(url_for('home'))
-        return render_template('login.html', error='الإيميل أو كلمة السر غلط!')
-    return render_template('login.html')
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('home'))
-
-@app.route('/courses')
-def courses():
-    all_courses = Course.query.filter_by(active=True).all()
-    return render_template('courses.html', courses=all_courses)
-
-@app.route('/course/<int:id>')
-def course_detail(id):
-    course = Course.query.get_or_404(id)
-    lectures = Lecture.query.filter_by(course_id=id, active=True).all()
-    return render_template('course_detail.html', course=course, lectures=lectures)
-
-@app.route('/admin/add_course', methods=['GET', 'POST'])
+@app.route('/add_course', methods=['GET', 'POST'])
 def add_course():
     if session.get('role') != 'admin':
         return redirect(url_for('home'))
     if request.method == 'POST':
-        title = request.form['title']
-        description = request.form['description']
-        subject = request.form['subject']
-        image = request.form['image']
-        course = Course(title=title, description=description, subject=subject, image=image)
-        db.session.add(course)
+        title = request.form.get('title')
+        desc = request.form.get('description')
+        subj = request.form.get('subject')
+        img = request.form.get('image')
+        new_course = Course(title=title, description=desc, subject=subj, image=img)
+        db.session.add(new_course)
         db.session.commit()
         return redirect(url_for('courses'))
     return render_template('add_course.html')
 
-@app.route('/admin/add_lecture', methods=['GET', 'POST'])
+@app.route('/add_lecture', methods=['GET', 'POST'])
 def add_lecture():
     if session.get('role') != 'admin':
         return redirect(url_for('home'))
     all_courses = Course.query.all()
     if request.method == 'POST':
-        title = request.form['title']
-        description = request.form['description']
-        course_id = request.form['course_id']
+        title = request.form.get('title')
+        course_id = request.form.get('course_id')
         file = request.files['video']
         if file:
             filename = secure_filename(file.filename)
-            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-            lecture = Lecture(title=title, description=description, filename=filename, course_id=course_id)
-            db.session.add(lecture)
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(file_path)
+            new_lec = Lecture(title=title, video_url=filename, course_id=course_id)
+            db.session.add(new_lec)
             db.session.commit()
-            return redirect(url_for('courses'))
+            return redirect(url_for('course_detail', id=course_id))
     return render_template('add_lecture.html', courses=all_courses)
 
-@app.route('/watch/<int:id>')
-def watch(id):
-    if not session.get('user_id'):
-        return redirect(url_for('login'))
-    lecture = Lecture.query.get_or_404(id)
-    return render_template('watch.html', lecture=lecture)
-
-@app.route('/profile')
-def profile():
-    if not session.get('user_id'):
-        return redirect(url_for('login'))
-    user = User.query.get(session['user_id'])
-    return render_template('profile.html', user=user)
-
-@app.route('/api/students')
-def api_students():
-    if session.get('role') != 'admin':
-        return jsonify({'error': 'unauthorized'}), 401
-    users = User.query.all()
-    return jsonify([{
-        'id': u.id,
-        'name': u.name,
-        'email': u.email,
-        'role': u.role,
-        'active': u.active
-    } for u in users])
-
-@app.route('/api/toggle_user/<int:id>', methods=['POST'])
-def toggle_user(id):
-    if session.get('role') != 'admin':
-        return jsonify({'error': 'unauthorized'}), 401
-    user = User.query.get(id)
-    if not user:
-        return jsonify({'error': 'user not found'}), 404
-    data = request.get_json()
-    user.active = data['active']
-    db.session.commit()
-    return jsonify({'success': True})
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True)
