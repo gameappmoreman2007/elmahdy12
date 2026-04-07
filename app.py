@@ -2,6 +2,7 @@ from flask import Flask, render_template, redirect, url_for, request, session, j
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from datetime import datetime, timedelta
 import os
 
 app = Flask(__name__)
@@ -13,13 +14,19 @@ db = SQLAlchemy(app)
 
 os.makedirs('static/uploads', exist_ok=True)
 
+# ==================== Models ====================
+
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100))
     email = db.Column(db.String(100), unique=True)
     password = db.Column(db.String(200))
-    role = db.Column(db.String(20))
+    role = db.Column(db.String(20), default='student')
     active = db.Column(db.Boolean, default=True)
+    subscribed = db.Column(db.Boolean, default=False)
+    subscription_end = db.Column(db.DateTime, nullable=True)
+    join_date = db.Column(db.DateTime, default=datetime.utcnow)
+    last_login = db.Column(db.DateTime, nullable=True)
 
 class Course(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -28,6 +35,8 @@ class Course(db.Model):
     subject = db.Column(db.String(100))
     image = db.Column(db.String(200), default='📚')
     active = db.Column(db.Boolean, default=True)
+    is_free = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Lecture(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -37,9 +46,40 @@ class Lecture(db.Model):
     course_id = db.Column(db.Integer, db.ForeignKey('course.id'))
     course = db.relationship('Course', backref='lectures')
     active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class Notification(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    message = db.Column(db.String(300))
+    is_read = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class SubscriptionRequest(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    user = db.relationship('User', backref='subscription_requests')
+    status = db.Column(db.String(20), default='pending')
+    plan = db.Column(db.String(50))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 with app.app_context():
     db.create_all()
+
+# ==================== Helper ====================
+
+def is_subscribed(user):
+    if user.role == 'admin':
+        return True
+    if user.subscribed and user.subscription_end:
+        if datetime.utcnow() < user.subscription_end:
+            return True
+        else:
+            user.subscribed = False
+            db.session.commit()
+    return False
+
+# ==================== Routes ====================
 
 @app.route('/')
 def home():
@@ -68,6 +108,10 @@ def register():
         user = User(name=name, email=email, password=password, role=role, active=True)
         db.session.add(user)
         db.session.commit()
+        # اشعار ترحيب
+        notif = Notification(user_id=user.id, message=f'أهلاً بك يا {name}! 🎉 سجلت في منصة معادلة بنجاح.')
+        db.session.add(notif)
+        db.session.commit()
         return redirect(url_for('login'))
     return render_template('register.html')
 
@@ -83,10 +127,11 @@ def login():
             session['user_id'] = user.id
             session['name'] = user.name
             session['role'] = user.role
+            user.last_login = datetime.utcnow()
+            db.session.commit()
             if user.role == 'admin':
                 return redirect(url_for('admin'))
-            else:
-                return redirect(url_for('home'))
+            return redirect(url_for('home'))
         return render_template('login.html', error='الإيميل أو كلمة السر غلط!')
     return render_template('login.html')
 
@@ -104,7 +149,53 @@ def courses():
 def course_detail(id):
     course = Course.query.get_or_404(id)
     lectures = Lecture.query.filter_by(course_id=id, active=True).all()
-    return render_template('course_detail.html', course=course, lectures=lectures)
+    user = None
+    subscribed = False
+    if session.get('user_id'):
+        user = User.query.get(session['user_id'])
+        subscribed = is_subscribed(user)
+    return render_template('course_detail.html', course=course, lectures=lectures, subscribed=subscribed)
+
+@app.route('/watch/<int:id>')
+def watch(id):
+    if not session.get('user_id'):
+        return redirect(url_for('login'))
+    lecture = Lecture.query.get_or_404(id)
+    user = User.query.get(session['user_id'])
+    if not lecture.course.is_free and not is_subscribed(user):
+        return redirect(url_for('subscribe'))
+    return render_template('watch.html', lecture=lecture)
+
+@app.route('/subscribe')
+def subscribe():
+    if not session.get('user_id'):
+        return redirect(url_for('login'))
+    user = User.query.get(session['user_id'])
+    subscribed = is_subscribed(user)
+    requests = SubscriptionRequest.query.filter_by(user_id=user.id).order_by(SubscriptionRequest.created_at.desc()).first()
+    return render_template('subscribe.html', user=user, subscribed=subscribed, last_request=requests)
+
+@app.route('/subscribe/request', methods=['POST'])
+def subscribe_request():
+    if not session.get('user_id'):
+        return redirect(url_for('login'))
+    plan = request.form.get('plan', 'monthly')
+    existing = SubscriptionRequest.query.filter_by(user_id=session['user_id'], status='pending').first()
+    if existing:
+        return redirect(url_for('subscribe'))
+    sub_req = SubscriptionRequest(user_id=session['user_id'], plan=plan)
+    db.session.add(sub_req)
+    db.session.commit()
+    return redirect(url_for('subscribe'))
+
+@app.route('/profile')
+def profile():
+    if not session.get('user_id'):
+        return redirect(url_for('login'))
+    user = User.query.get(session['user_id'])
+    subscribed = is_subscribed(user)
+    notifications = Notification.query.filter_by(user_id=user.id).order_by(Notification.created_at.desc()).limit(5).all()
+    return render_template('profile.html', user=user, subscribed=subscribed, notifications=notifications)
 
 @app.route('/admin/add_course', methods=['GET', 'POST'])
 def add_course():
@@ -115,7 +206,8 @@ def add_course():
         description = request.form['description']
         subject = request.form['subject']
         image = request.form['image']
-        course = Course(title=title, description=description, subject=subject, image=image)
+        is_free = request.form.get('is_free') == 'on'
+        course = Course(title=title, description=description, subject=subject, image=image, is_free=is_free)
         db.session.add(course)
         db.session.commit()
         return redirect(url_for('courses'))
@@ -140,19 +232,7 @@ def add_lecture():
             return redirect(url_for('courses'))
     return render_template('add_lecture.html', courses=all_courses)
 
-@app.route('/watch/<int:id>')
-def watch(id):
-    if not session.get('user_id'):
-        return redirect(url_for('login'))
-    lecture = Lecture.query.get_or_404(id)
-    return render_template('watch.html', lecture=lecture)
-
-@app.route('/profile')
-def profile():
-    if not session.get('user_id'):
-        return redirect(url_for('login'))
-    user = User.query.get(session['user_id'])
-    return render_template('profile.html', user=user)
+# ==================== APIs ====================
 
 @app.route('/api/students')
 def api_students():
@@ -164,7 +244,11 @@ def api_students():
         'name': u.name,
         'email': u.email,
         'role': u.role,
-        'active': u.active
+        'active': u.active,
+        'subscribed': u.subscribed,
+        'subscription_end': u.subscription_end.strftime('%Y-%m-%d') if u.subscription_end else None,
+        'join_date': u.join_date.strftime('%Y-%m-%d') if u.join_date else None,
+        'last_login': u.last_login.strftime('%Y-%m-%d') if u.last_login else 'لم يدخل بعد'
     } for u in users])
 
 @app.route('/api/toggle_user/<int:id>', methods=['POST'])
@@ -178,6 +262,61 @@ def toggle_user(id):
     user.active = data['active']
     db.session.commit()
     return jsonify({'success': True})
+
+@app.route('/api/toggle_subscription/<int:id>', methods=['POST'])
+def toggle_subscription(id):
+    if session.get('role') != 'admin':
+        return jsonify({'error': 'unauthorized'}), 401
+    user = User.query.get(id)
+    if not user:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json()
+    user.subscribed = data['subscribed']
+    if data['subscribed']:
+        months = data.get('months', 1)
+        user.subscription_end = datetime.utcnow() + timedelta(days=30 * months)
+        notif = Notification(user_id=user.id, message=f'🎉 تم تفعيل اشتراكك لمدة {months} شهر! استمتع بكل المحتوى.')
+    else:
+        user.subscription_end = None
+        notif = Notification(user_id=user.id, message='❌ تم إلغاء اشتراكك. تواصل مع الأدمين للتجديد.')
+    db.session.add(notif)
+    # قبول طلب الاشتراك
+    pending = SubscriptionRequest.query.filter_by(user_id=id, status='pending').first()
+    if pending:
+        pending.status = 'approved' if data['subscribed'] else 'rejected'
+    db.session.commit()
+    return jsonify({'success': True, 'subscription_end': user.subscription_end.strftime('%Y-%m-%d') if user.subscription_end else None})
+
+@app.route('/api/subscription_requests')
+def api_subscription_requests():
+    if session.get('role') != 'admin':
+        return jsonify({'error': 'unauthorized'}), 401
+    requests = SubscriptionRequest.query.filter_by(status='pending').all()
+    return jsonify([{
+        'id': r.id,
+        'user_id': r.user_id,
+        'name': r.user.name,
+        'email': r.user.email,
+        'plan': r.plan,
+        'created_at': r.created_at.strftime('%Y-%m-%d')
+    } for r in requests])
+
+@app.route('/api/stats')
+def api_stats():
+    if session.get('role') != 'admin':
+        return jsonify({'error': 'unauthorized'}), 401
+    courses = Course.query.count()
+    lectures = Lecture.query.count()
+    students = User.query.filter_by(role='student').count()
+    subscribed = User.query.filter_by(subscribed=True).count()
+    pending_requests = SubscriptionRequest.query.filter_by(status='pending').count()
+    return jsonify({
+        'courses': courses,
+        'lectures': lectures,
+        'students': students,
+        'subscribed': subscribed,
+        'pending_requests': pending_requests
+    })
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
