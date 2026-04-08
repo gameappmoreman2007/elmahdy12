@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>في انتظار الموافقة - معادلة</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial; background: linear-gradient(135deg, #1a237e, #3949ab); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .box { background: white; border-radius: 20px; padding: 50px 40px; text-align: center; max-width: 450px; box-shadow: 0 20px 60px rgba(0,0,0,0.2); animation: fadeIn 0.5s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+        .icon { font-size: 80px; margin-bottom: 20px; animation: bounce 2s infinite; }
+        @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-15px); } }
+        h2 { color: #1a237e; font-size: 26px; margin-bottom: 15px; }
+        p { color: #666; line-height: 1.7; margin-bottom: 10px; }
+        .name { color: #1a237e; font-weight: bold; font-size: 20px; }
+        .steps { background: #f0f4ff; border-radius: 15px; padding: 20px; margin: 20px 0; text-align: right; }
+        .step { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #e0e0e0; }
+        .step:last-child { border-bottom: none; }
+        .step-icon { font-size: 20px; }
+        .step p { color: #444; font-size: 14px; margin: 0; }
+        .btn { display: inline-block; margin-top: 20px; background: linear-gradient(135deg, #1a237e, #3949ab); color: white; padding: 12px 35px; border-radius: 25px; text-decoration: none; font-weight: bold; transition: 0.3s; }
+        .btn:hover { transform: scale(1.05); }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <div class="icon">⏳</div>
+        <h2>طلبك اتبعت!</h2>
+        <p class="name">أهلاً يا {{ name }}!</p>
+        <p>طلب تسجيلك اتبعت للأدمين وبيتراجع دلوقتي</p>
+        <div class="steps">
+            <div class="step"><span class="step-icon">✅</span><p>اتعمل حسابك بنجاح</p></div>
+            <div class="step"><span class="step-icon">⏳</span><p>الأدمين بيراجع طلبك</p></div>
+            <div class="step"><span class="step-icon">📧</span><p>هتقدر تدخل بعد الموافقة</p></div>
+            <div class="step"><span class="step-icon">🎉</span><p>استمتع بكل محتوى المنصة</p></div>
+        </div>
+        <p style="color:#999; font-size:13px;">لو عندك استفسار تواصل معنا</p>
+        <a href="/login" class="btn">🔐 تسجيل الدخول</a>
+    </div>
+</body>
+</html>
